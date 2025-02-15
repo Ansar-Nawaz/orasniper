@@ -1,50 +1,60 @@
 import os
+import requests
 from threading import Thread
 from typing import Iterator
-
 import gradio as gr
-import spaces
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
+from PyPDF2 import PdfReader
 
+# GitHub Raw URL for Oracle Documentation PDFs
+GITHUB_REPO_URL = "https://raw.githubusercontent.com/Ansar-Nawaz/OraDocume/main/"
+
+# Model Configuration
 MAX_MAX_NEW_TOKENS = 2048
 DEFAULT_MAX_NEW_TOKENS = 1024
-
 MAX_INPUT_TOKEN_LENGTH = int(os.getenv("MAX_INPUT_TOKEN_LENGTH", "4096"))
 
 DESCRIPTION = """\
-# DeepSeek-6.7B-Chat
-
-This Space demonstrates model [DeepSeek-Coder](https://huggingface.co/deepseek-ai/deepseek-coder-6.7b-instruct) by DeepSeek, a code model with 6.7B parameters fine-tuned for chat instructions.
+# Oracle Sniper Chatbot
+This chatbot assists in resolving Oracle database issues using AI and Oracle documentation.
 """
-
-if not torch.cuda.is_available():
-    DESCRIPTION += "\n<p>Running on CPU 🥶 This demo does not work on CPU.</p>"
 
 if torch.cuda.is_available():
     model_id = "deepseek-ai/deepseek-coder-6.7b-instruct"
     model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     tokenizer.use_default_system_prompt = False
+else:
+    DESCRIPTION += "\n<p>Running on CPU 🥶 This demo does not work well on CPU.</p>"
 
-def resolve_oracle_issue(query: str) -> str:
-    """
-    Check if the user query relates to Oracle database issues.
-    If so, return a response with relevant Oracle documentation links and recommendations.
-    """
-    # Define keywords that suggest the query is Oracle-related.
-    keywords = ["oracle", "rman", "asm", "spfile", "control file", "tbs", "tablespace", "database"]
-    if any(kw in query.lower() for kw in keywords):
-        return (
-            "It appears your query is related to Oracle database issues.\n\n"
-            "Please refer to the following Oracle documentation for further guidance:\n"
-            "- [RMAN Backup and Recovery](https://docs.oracle.com/en/database/oracle/oracle-database/19/rcmrf/index.html)\n"
-            "- [Oracle ASM Management](https://docs.oracle.com/en/database/oracle/oracle-database/19/ostmg/index.html)\n\n"
-            "Ensure your configurations adhere to Oracle's best practices."
-        )
-    return None
 
-@spaces.GPU
+def fetch_pdf_text(pdf_name: str) -> str:
+    """Fetches and extracts text from a PDF stored in the GitHub repository."""
+    pdf_url = f"{GITHUB_REPO_URL}{pdf_name}"
+    try:
+        response = requests.get(pdf_url)
+        response.raise_for_status()
+        with open("temp.pdf", "wb") as f:
+            f.write(response.content)
+        reader = PdfReader("temp.pdf")
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        os.remove("temp.pdf")
+        return text
+    except Exception as e:
+        return f"Error fetching PDF: {str(e)}"
+
+
+def search_oracle_docs(query: str) -> str:
+    """Searches Oracle documentation PDFs for relevant information."""
+    pdfs = ["oracle_errors.pdf", "rman_guide.pdf", "asm_management.pdf"]
+    for pdf in pdfs:
+        text = fetch_pdf_text(pdf)
+        if query.lower() in text.lower():
+            return f"Relevant information found in {pdf}:\n\n" + text[:1000] + "...\n"
+    return "No relevant Oracle documentation found in PDFs."
+
+
 def generate(
     message: str,
     chat_history: list,
@@ -55,14 +65,13 @@ def generate(
     top_k: int = 50,
     repetition_penalty: float = 1,
 ) -> Iterator[str]:
-    # Check if the user's message is related to Oracle database issues.
-    oracle_response = resolve_oracle_issue(message)
-    if oracle_response:
-        # Yield the Oracle documentation response and skip model generation.
+    """Handles user queries, first searching Oracle PDFs before using AI model."""
+    oracle_response = search_oracle_docs(message)
+    if "Relevant information found" in oracle_response:
         yield oracle_response
         return
-
-    # Build the conversation for DeepSeek's chat template.
+    
+    # AI Model Processing
     conversation = []
     if system_prompt:
         conversation.append({"role": "system", "content": system_prompt})
@@ -73,25 +82,21 @@ def generate(
         ])
     conversation.append({"role": "user", "content": message})
 
-    # Convert conversation into model input tokens.
     input_ids = tokenizer.apply_chat_template(conversation, return_tensors="pt", add_generation_prompt=True)
     if input_ids.shape[1] > MAX_INPUT_TOKEN_LENGTH:
         input_ids = input_ids[:, -MAX_INPUT_TOKEN_LENGTH:]
-        gr.Warning(f"Trimmed input from conversation as it was longer than {MAX_INPUT_TOKEN_LENGTH} tokens.")
     input_ids = input_ids.to(model.device)
 
-    # Set up a text streamer to stream responses.
     streamer = TextIteratorStreamer(tokenizer, timeout=10.0, skip_prompt=True, skip_special_tokens=True)
-    generate_kwargs = dict(
-        {"input_ids": input_ids},
-        streamer=streamer,
-        max_new_tokens=max_new_tokens,
-        do_sample=False,
-        num_beams=1,
-        repetition_penalty=repetition_penalty,
-        eos_token_id=tokenizer.eos_token_id
-    )
-    # Run the model.generate in a separate thread.
+    generate_kwargs = {
+        "input_ids": input_ids,
+        "streamer": streamer,
+        "max_new_tokens": max_new_tokens,
+        "do_sample": False,
+        "num_beams": 1,
+        "repetition_penalty": repetition_penalty,
+        "eos_token_id": tokenizer.eos_token_id
+    }
     t = Thread(target=model.generate, kwargs=generate_kwargs)
     t.start()
 
@@ -100,44 +105,21 @@ def generate(
         outputs.append(text)
         yield "".join(outputs).replace("<|EOT|>", "")
 
+
 chat_interface = gr.ChatInterface(
     fn=generate,
     additional_inputs=[
         gr.Textbox(label="System prompt", lines=6),
-        gr.Slider(
-            label="Max new tokens",
-            minimum=1,
-            maximum=MAX_MAX_NEW_TOKENS,
-            step=1,
-            value=DEFAULT_MAX_NEW_TOKENS,
-        ),
-        gr.Slider(
-            label="Top-p (nucleus sampling)",
-            minimum=0.05,
-            maximum=1.0,
-            step=0.05,
-            value=0.9,
-        ),
-        gr.Slider(
-            label="Top-k",
-            minimum=1,
-            maximum=1000,
-            step=1,
-            value=50,
-        ),
-        gr.Slider(
-            label="Repetition penalty",
-            minimum=1.0,
-            maximum=2.0,
-            step=0.05,
-            value=1,
-        ),
+        gr.Slider(label="Max new tokens", minimum=1, maximum=MAX_MAX_NEW_TOKENS, step=1, value=DEFAULT_MAX_NEW_TOKENS),
+        gr.Slider(label="Top-p (nucleus sampling)", minimum=0.05, maximum=1.0, step=0.05, value=0.9),
+        gr.Slider(label="Top-k", minimum=1, maximum=1000, step=1, value=50),
+        gr.Slider(label="Repetition penalty", minimum=1.0, maximum=2.0, step=0.05, value=1),
     ],
     stop_btn=None,
     examples=[
-        ["implement snake game using pygame"],
-        ["Can you explain briefly to me what is the Python programming language?"],
-        ["write a program to find the factorial of a number"],
+        ["ORA-16198 encountered during Data Guard setup"],
+        ["How to configure RMAN backup with FRA?"],
+        ["What is the difference between ASM and traditional file systems?"],
     ],
 )
 
@@ -146,5 +128,5 @@ with gr.Blocks(css="style.css") as demo:
     chat_interface.render()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Use Railway-provided port; default to 5000 if not set.
+    port = int(os.environ.get("PORT", 5000))
     demo.queue().launch(server_name="0.0.0.0", server_port=port, share=True)
