@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 from threading import Thread
 from typing import Iterator
@@ -8,14 +9,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStream
 from PyPDF2 import PdfReader
 
 # GitHub Raw URL for Oracle Documentation PDFs
-GITHUB_REPO_URL = "https://raw.githubusercontent.com/Ansar-Nawaz/OraDocume/main/"
+GITHUB_REPO_URL = "https://raw.githubusercontent.com/Ansar-Nawaz/OraDocuments/main/"
+GITHUB_API_URL = "https://api.github.com/repos/Ansar-Nawaz/OraDocuments/contents/"
 
 # Model Configuration
 MAX_MAX_NEW_TOKENS = 2048
 DEFAULT_MAX_NEW_TOKENS = 1024
 MAX_INPUT_TOKEN_LENGTH = int(os.getenv("MAX_INPUT_TOKEN_LENGTH", "4096"))
 
-DESCRIPTION = """\
+DESCRIPTION = """
 # Oracle Sniper Chatbot
 This chatbot assists in resolving Oracle database issues using AI and Oracle documentation.
 """
@@ -26,7 +28,18 @@ if torch.cuda.is_available():
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     tokenizer.use_default_system_prompt = False
 else:
-    DESCRIPTION += "\n<p>Running on CPU 🥶 This demo does not work well on CPU.</p>"
+    DESCRIPTION += "\n<p>Running on CPU \U0001F976 This demo does not work well on CPU.</p>"
+
+
+def get_pdf_list() -> list:
+    """Fetches a list of all PDFs from the GitHub repository."""
+    try:
+        response = requests.get(GITHUB_API_URL)
+        response.raise_for_status()
+        files = response.json()
+        return [file["name"] for file in files if file["name"].endswith(".pdf")]
+    except Exception as e:
+        return []
 
 
 def fetch_pdf_text(pdf_name: str) -> str:
@@ -42,17 +55,17 @@ def fetch_pdf_text(pdf_name: str) -> str:
         os.remove("temp.pdf")
         return text
     except Exception as e:
-        return f"Error fetching PDF: {str(e)}"
+        return json.dumps({"error": f"Error fetching PDF: {str(e)}"})
 
 
 def search_oracle_docs(query: str) -> str:
-    """Searches Oracle documentation PDFs for relevant information."""
-    pdfs = ["oracle_errors.pdf", "rman_guide.pdf", "asm_management.pdf"]
+    """Searches all available Oracle documentation PDFs for relevant information."""
+    pdfs = get_pdf_list()
     for pdf in pdfs:
         text = fetch_pdf_text(pdf)
         if query.lower() in text.lower():
-            return f"Relevant information found in {pdf}:\n\n" + text[:1000] + "...\n"
-    return "No relevant Oracle documentation found in PDFs."
+            return json.dumps({"response": f"Relevant information found in {pdf}", "content": text[:1000] + "..."})
+    return json.dumps({"response": "No relevant Oracle documentation found in PDFs."})
 
 
 def generate(
@@ -66,44 +79,49 @@ def generate(
     repetition_penalty: float = 1,
 ) -> Iterator[str]:
     """Handles user queries, first searching Oracle PDFs before using AI model."""
-    oracle_response = search_oracle_docs(message)
-    if "Relevant information found" in oracle_response:
-        yield oracle_response
-        return
-    
-    # AI Model Processing
-    conversation = []
-    if system_prompt:
-        conversation.append({"role": "system", "content": system_prompt})
-    for user, assistant in chat_history:
-        conversation.extend([
-            {"role": "user", "content": user},
-            {"role": "assistant", "content": assistant}
-        ])
-    conversation.append({"role": "user", "content": message})
+    try:
+        oracle_response = search_oracle_docs(message)
+        oracle_json = json.loads(oracle_response)
+        if "Relevant information found" in oracle_json.get("response", ""):
+            yield oracle_response  # Already in JSON format
+            return
 
-    input_ids = tokenizer.apply_chat_template(conversation, return_tensors="pt", add_generation_prompt=True)
-    if input_ids.shape[1] > MAX_INPUT_TOKEN_LENGTH:
-        input_ids = input_ids[:, -MAX_INPUT_TOKEN_LENGTH:]
-    input_ids = input_ids.to(model.device)
+        # AI Model Processing
+        conversation = []
+        if system_prompt:
+            conversation.append({"role": "system", "content": system_prompt})
+        for user, assistant in chat_history:
+            conversation.extend([
+                {"role": "user", "content": user},
+                {"role": "assistant", "content": assistant}
+            ])
+        conversation.append({"role": "user", "content": message})
 
-    streamer = TextIteratorStreamer(tokenizer, timeout=10.0, skip_prompt=True, skip_special_tokens=True)
-    generate_kwargs = {
-        "input_ids": input_ids,
-        "streamer": streamer,
-        "max_new_tokens": max_new_tokens,
-        "do_sample": False,
-        "num_beams": 1,
-        "repetition_penalty": repetition_penalty,
-        "eos_token_id": tokenizer.eos_token_id
-    }
-    t = Thread(target=model.generate, kwargs=generate_kwargs)
-    t.start()
+        input_ids = tokenizer.apply_chat_template(conversation, return_tensors="pt", add_generation_prompt=True)
+        if input_ids.shape[1] > MAX_INPUT_TOKEN_LENGTH:
+            input_ids = input_ids[:, -MAX_INPUT_TOKEN_LENGTH:]
+        input_ids = input_ids.to(model.device)
 
-    outputs = []
-    for text in streamer:
-        outputs.append(text)
-        yield "".join(outputs).replace("<|EOT|>", "")
+        streamer = TextIteratorStreamer(tokenizer, timeout=10.0, skip_prompt=True, skip_special_tokens=True)
+        generate_kwargs = {
+            "input_ids": input_ids,
+            "streamer": streamer,
+            "max_new_tokens": max_new_tokens,
+            "do_sample": False,
+            "num_beams": 1,
+            "repetition_penalty": repetition_penalty,
+            "eos_token_id": tokenizer.eos_token_id
+        }
+        t = Thread(target=model.generate, kwargs=generate_kwargs)
+        t.start()
+
+        outputs = []
+        for text in streamer:
+            outputs.append(text)
+            yield json.dumps({"response": "".join(outputs).replace("<|EOT|>", "")})
+
+    except Exception as e:
+        yield json.dumps({"error": str(e)})
 
 
 chat_interface = gr.ChatInterface(
