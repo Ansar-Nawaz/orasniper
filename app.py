@@ -22,6 +22,7 @@ DESCRIPTION = """
 This chatbot assists in resolving Oracle database issues using AI and Oracle documentation.
 """
 
+# Load AI Model based on hardware availability
 if torch.cuda.is_available():
     model_id = "deepseek-ai/deepseek-coder-6.7b-instruct"
     model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="auto")
@@ -48,14 +49,20 @@ def fetch_pdf_text(pdf_name: str) -> str:
     try:
         response = requests.get(pdf_url)
         response.raise_for_status()
+        
+        # Save the PDF temporarily
         with open("temp.pdf", "wb") as f:
             f.write(response.content)
+        
+        # Extract text from the PDF
         reader = PdfReader("temp.pdf")
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        
+        # Remove temporary file
         os.remove("temp.pdf")
         return text
     except Exception as e:
-        return json.dumps({"error": f"Error fetching PDF: {str(e)}"})
+        return ""
 
 
 def search_oracle_docs(query: str) -> str:
@@ -63,7 +70,7 @@ def search_oracle_docs(query: str) -> str:
     pdfs = get_pdf_list()
     for pdf in pdfs:
         text = fetch_pdf_text(pdf)
-        if query.lower() in text.lower():
+        if text and query.lower() in text.lower():
             return json.dumps({"response": f"Relevant information found in {pdf}", "content": text[:1000] + "..."})
     return json.dumps({"response": "No relevant Oracle documentation found in PDFs."})
 
@@ -80,10 +87,13 @@ def generate(
 ) -> Iterator[str]:
     """Handles user queries, first searching Oracle PDFs before using AI model."""
     try:
+        # Search Oracle Documentation for relevant information
         oracle_response = search_oracle_docs(message)
         oracle_json = json.loads(oracle_response)
+        yield json.dumps(oracle_json)  # Ensure valid JSON response
+        
+        # If relevant documentation is found, return early
         if "Relevant information found" in oracle_json.get("response", ""):
-            yield oracle_response  # Already in JSON format
             return
 
         # AI Model Processing
@@ -97,11 +107,13 @@ def generate(
             ])
         conversation.append({"role": "user", "content": message})
 
+        # Tokenize input
         input_ids = tokenizer.apply_chat_template(conversation, return_tensors="pt", add_generation_prompt=True)
         if input_ids.shape[1] > MAX_INPUT_TOKEN_LENGTH:
             input_ids = input_ids[:, -MAX_INPUT_TOKEN_LENGTH:]
         input_ids = input_ids.to(model.device)
 
+        # Streaming output using AI model
         streamer = TextIteratorStreamer(tokenizer, timeout=10.0, skip_prompt=True, skip_special_tokens=True)
         generate_kwargs = {
             "input_ids": input_ids,
@@ -124,6 +136,7 @@ def generate(
         yield json.dumps({"error": str(e)})
 
 
+# Gradio Chat Interface
 chat_interface = gr.ChatInterface(
     fn=generate,
     additional_inputs=[
@@ -141,6 +154,7 @@ chat_interface = gr.ChatInterface(
     ],
 )
 
+# Launch Gradio App
 with gr.Blocks(css="style.css") as demo:
     gr.Markdown(DESCRIPTION)
     chat_interface.render()
