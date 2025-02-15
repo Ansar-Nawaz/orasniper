@@ -9,7 +9,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStream
 from PyPDF2 import PdfReader
 
 # GitHub Raw URL for Oracle Documentation PDFs
-GITHUB_REPO_URL = "https://raw.githubusercontent.com/Ansar-Nawaz/OraDocuments/main/"
+GITHUB_REPO_URL = "https://raw.githubusercontent.com/Ansar-Nawaz/OraDocuments/"
 GITHUB_API_URL = "https://api.github.com/repos/Ansar-Nawaz/OraDocuments/contents/"
 
 # Model Configuration
