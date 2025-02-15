@@ -72,7 +72,7 @@ def search_oracle_docs(query: str) -> dict:
 
 def detect_error_code(message: str) -> str:
     """Extracts Oracle error codes from the user message, handling various formats."""
-    match = re.search(r'\b[a-zA-Z]+-\d{5}\b', message, re.IGNORECASE)
+    match = re.search(r'\b[A-Za-z]+-\d{5}\b', message, re.IGNORECASE)
     return match.group(0) if match else ""
 
 def analyze_sentiment(message: str) -> str:
@@ -139,6 +139,10 @@ def generate(
             yield json.dumps({"response": "".join(outputs).replace("<|EOT|>", ""), "sentiment": sentiment})
     except Exception as e:
         yield json.dumps({"error": str(e)})
+
+with gr.Blocks() as demo:
+    gr.Markdown(DESCRIPTION)
+    chatbot = gr.ChatInterface(generate)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
