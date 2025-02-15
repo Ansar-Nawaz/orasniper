@@ -8,3 +8,5 @@ timeout-decorator
 attrdict
 gradio
 spaces
+PyPDF2
+requests
