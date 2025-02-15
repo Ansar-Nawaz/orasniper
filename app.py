@@ -25,13 +25,15 @@ This chatbot assists in resolving Oracle database issues using AI and Oracle doc
 """
 
 # Load AI Model based on hardware availability
+model_id = "deepseek-ai/deepseek-coder-6.7b-instruct"
 if torch.cuda.is_available():
-    model_id = "deepseek-ai/deepseek-coder-6.7b-instruct"
     model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="auto")
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    tokenizer.use_default_system_prompt = False
 else:
+    model = AutoModelForCausalLM.from_pretrained(model_id)
     DESCRIPTION += "\n<p>Running on CPU \U0001F976 This demo does not work well on CPU.</p>"
+
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+tokenizer.use_default_system_prompt = False
 
 def get_pdf_list() -> list:
     """Fetches a list of all PDFs from the GitHub repository."""
