@@ -11,3 +11,4 @@ spaces
 PyPDF2
 requests
 textblob
+pydantic<2
