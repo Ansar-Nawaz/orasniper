@@ -5,8 +5,10 @@ from threading import Thread
 from typing import Iterator
 import gradio as gr
 import torch
+import re
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 from PyPDF2 import PdfReader
+from textblob import TextBlob  # Sentiment analysis
 
 # GitHub Raw URL for Oracle Documentation PDFs
 GITHUB_REPO_URL = "https://raw.githubusercontent.com/Ansar-Nawaz/OraDocuments/"
@@ -31,7 +33,6 @@ if torch.cuda.is_available():
 else:
     DESCRIPTION += "\n<p>Running on CPU \U0001F976 This demo does not work well on CPU.</p>"
 
-
 def get_pdf_list() -> list:
     """Fetches a list of all PDFs from the GitHub repository."""
     try:
@@ -39,9 +40,8 @@ def get_pdf_list() -> list:
         response.raise_for_status()
         files = response.json()
         return [file["name"] for file in files if file["name"].endswith(".pdf")]
-    except Exception as e:
+    except Exception:
         return []
-
 
 def fetch_pdf_text(pdf_name: str) -> str:
     """Fetches and extracts text from a PDF stored in the GitHub repository."""
@@ -50,30 +50,39 @@ def fetch_pdf_text(pdf_name: str) -> str:
         response = requests.get(pdf_url)
         response.raise_for_status()
         
-        # Save the PDF temporarily
         with open("temp.pdf", "wb") as f:
             f.write(response.content)
         
-        # Extract text from the PDF
         reader = PdfReader("temp.pdf")
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
         
-        # Remove temporary file
         os.remove("temp.pdf")
         return text
-    except Exception as e:
+    except Exception:
         return ""
 
-
-def search_oracle_docs(query: str) -> str:
+def search_oracle_docs(query: str) -> dict:
     """Searches all available Oracle documentation PDFs for relevant information."""
     pdfs = get_pdf_list()
     for pdf in pdfs:
         text = fetch_pdf_text(pdf)
         if text and query.lower() in text.lower():
-            return json.dumps({"response": f"Relevant information found in {pdf}", "content": text[:1000] + "..."})
-    return json.dumps({"response": "No relevant Oracle documentation found in PDFs."})
+            return {"response": f"Relevant information found in {pdf}", "content": text[:1000] + "..."}
+    return {"response": "No relevant Oracle documentation found in PDFs."}
 
+def detect_error_code(message: str) -> str:
+    """Extracts Oracle error codes from the user message, handling various formats."""
+    match = re.search(r'\b[a-zA-Z]+-\d{5}\b', message, re.IGNORECASE)
+    return match.group(0) if match else ""
+
+def analyze_sentiment(message: str) -> str:
+    """Analyzes the sentiment of the user's message."""
+    sentiment = TextBlob(message).sentiment.polarity
+    if sentiment < -0.3:
+        return "frustrated"
+    elif sentiment > 0.3:
+        return "positive"
+    return "neutral"
 
 def generate(
     message: str,
@@ -87,16 +96,15 @@ def generate(
 ) -> Iterator[str]:
     """Handles user queries, first searching Oracle PDFs before using AI model."""
     try:
-        # Search Oracle Documentation for relevant information
-        oracle_response = search_oracle_docs(message)
-        oracle_json = json.loads(oracle_response)
-        yield json.dumps(oracle_json)  # Ensure valid JSON response
+        error_code = detect_error_code(message)
+        sentiment = analyze_sentiment(message)
         
-        # If relevant documentation is found, return early
+        oracle_json = search_oracle_docs(error_code if error_code else message)
+        yield json.dumps({"response": oracle_json.get("response", ""), "content": oracle_json.get("content", ""), "sentiment": sentiment})
+        
         if "Relevant information found" in oracle_json.get("response", ""):
             return
 
-        # AI Model Processing
         conversation = []
         if system_prompt:
             conversation.append({"role": "system", "content": system_prompt})
@@ -107,13 +115,11 @@ def generate(
             ])
         conversation.append({"role": "user", "content": message})
 
-        # Tokenize input
         input_ids = tokenizer.apply_chat_template(conversation, return_tensors="pt", add_generation_prompt=True)
         if input_ids.shape[1] > MAX_INPUT_TOKEN_LENGTH:
             input_ids = input_ids[:, -MAX_INPUT_TOKEN_LENGTH:]
         input_ids = input_ids.to(model.device)
 
-        # Streaming output using AI model
         streamer = TextIteratorStreamer(tokenizer, timeout=10.0, skip_prompt=True, skip_special_tokens=True)
         generate_kwargs = {
             "input_ids": input_ids,
@@ -130,34 +136,9 @@ def generate(
         outputs = []
         for text in streamer:
             outputs.append(text)
-            yield json.dumps({"response": "".join(outputs).replace("<|EOT|>", "")})
-
+            yield json.dumps({"response": "".join(outputs).replace("<|EOT|>", ""), "sentiment": sentiment})
     except Exception as e:
         yield json.dumps({"error": str(e)})
-
-
-# Gradio Chat Interface
-chat_interface = gr.ChatInterface(
-    fn=generate,
-    additional_inputs=[
-        gr.Textbox(label="System prompt", lines=6),
-        gr.Slider(label="Max new tokens", minimum=1, maximum=MAX_MAX_NEW_TOKENS, step=1, value=DEFAULT_MAX_NEW_TOKENS),
-        gr.Slider(label="Top-p (nucleus sampling)", minimum=0.05, maximum=1.0, step=0.05, value=0.9),
-        gr.Slider(label="Top-k", minimum=1, maximum=1000, step=1, value=50),
-        gr.Slider(label="Repetition penalty", minimum=1.0, maximum=2.0, step=0.05, value=1),
-    ],
-    stop_btn=None,
-    examples=[
-        ["ORA-16198 encountered during Data Guard setup"],
-        ["How to configure RMAN backup with FRA?"],
-        ["What is the difference between ASM and traditional file systems?"],
-    ],
-)
-
-# Launch Gradio App
-with gr.Blocks(css="style.css") as demo:
-    gr.Markdown(DESCRIPTION)
-    chat_interface.render()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
