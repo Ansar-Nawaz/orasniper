@@ -10,3 +10,4 @@ gradio
 spaces
 PyPDF2
 requests
+textblob
