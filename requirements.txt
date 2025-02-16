@@ -8,9 +8,10 @@ spaces
 requests
 textblob
 pydantic<2
-transformers==4.37.0
-huggingface_hub==0.20.0
 torch
 gradio
 textblob
 pypdf2
+huggingface_hub==0.24.0
+transformers==4.38.2
+

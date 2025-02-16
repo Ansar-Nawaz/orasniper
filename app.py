@@ -10,7 +10,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStream
 from PyPDF2 import PdfReader
 from textblob import TextBlob  # Sentiment analysis
 
-# Ensure the correct version of huggingface_hub and transformers
+# Ensure correct package versions
+os.system("pip uninstall -y transformers huggingface_hub")
 os.system("pip install --upgrade huggingface_hub==0.24.0 transformers==4.38.2")
 
 # GitHub Raw URL for Oracle Documentation PDFs
@@ -29,11 +30,15 @@ This chatbot assists in resolving Oracle database issues using AI and Oracle doc
 
 # Load AI Model based on hardware availability
 model_id = "deepseek-ai/deepseek-coder-6.7b-instruct"
-if torch.cuda.is_available():
-    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="auto")
-else:
-    model = AutoModelForCausalLM.from_pretrained(model_id)
-    DESCRIPTION += "\n<p>Running on CPU \U0001F976 This demo does not work well on CPU.</p>"
+try:
+    if torch.cuda.is_available():
+        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="auto")
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_id)
+        DESCRIPTION += "\n<p>Running on CPU \U0001F976 This demo does not work well on CPU.</p>"
+except Exception as e:
+    print(f"Error loading model: {e}")
+    model = None  # Fallback in case of failure
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 tokenizer.use_default_system_prompt = False
