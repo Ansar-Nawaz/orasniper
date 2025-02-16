@@ -32,7 +32,7 @@ This chatbot assists in resolving Oracle database issues using AI and Oracle doc
 """
 
 # Load AI Model based on hardware availability
-model_id = "deepseek-ai/deepseek-coder-6.7b-instruct"
+model_id = "mistralai/Mistral-7B-Instruct"
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 if torch.cuda.is_available():
@@ -155,5 +155,5 @@ with gr.Blocks() as demo:
     chatbot = gr.ChatInterface(generate)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8080))
     demo.queue().launch(server_name="0.0.0.0", server_port=port, share=True)
