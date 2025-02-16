@@ -32,15 +32,13 @@ This chatbot assists in resolving Oracle database issues using AI and Oracle doc
 """
 
 # Load AI Model based on hardware availability
-model_id = "mistralai/Mistral-7B-Instruct"
-HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")  # Ensure this environment variable is set
-
-tokenizer = AutoTokenizer.from_pretrained(model_id, use_auth_token=HUGGINGFACE_TOKEN)
+model_id = "mistralai/Mistral-7B-v0.1"
+tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 if torch.cuda.is_available():
-    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="auto", force_download=True, use_auth_token=HUGGINGFACE_TOKEN)
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16, device_map="auto", force_download=True)
 else:
-    model = AutoModelForCausalLM.from_pretrained(model_id, force_download=True, use_auth_token=HUGGINGFACE_TOKEN)
+    model = AutoModelForCausalLM.from_pretrained(model_id, force_download=True)
     DESCRIPTION += "\n<p>Running on CPU \U0001F976 This demo does not work well on CPU.</p>"
 
 tokenizer.use_default_system_prompt = False
