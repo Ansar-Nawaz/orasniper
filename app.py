@@ -32,7 +32,7 @@ This chatbot assists in resolving Oracle database issues using AI and Oracle doc
 """
 
 # Load AI Model based on hardware availability
-model_id = "mistralai/Mistral-7B-v0.1"
+model_id = "meta-llama/Llama-2-7b-chat-hf"
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 if torch.cuda.is_available():
