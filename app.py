@@ -10,8 +10,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStream
 from PyPDF2 import PdfReader
 from textblob import TextBlob  # Sentiment analysis
 
-# Ensure the correct version of huggingface_hub
-os.system("pip install --upgrade huggingface_hub")
+# Ensure the correct version of huggingface_hub and transformers
+os.system("pip install --upgrade huggingface_hub==0.24.0 transformers==4.38.2")
 
 # GitHub Raw URL for Oracle Documentation PDFs
 GITHUB_REPO_URL = "https://raw.githubusercontent.com/Ansar-Nawaz/OraDocuments/"
